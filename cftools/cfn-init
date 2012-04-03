@@ -1,3 +1,4 @@
+#!/usr/bin/python
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -13,4 +14,232 @@
 
 """
 Implements cfn-init CloudFormations functionality
+
+Resource metadata currently implemented:
+    * config/packages
+    * config/services
+
+Not implemented yet:
+    * config sets
+    * config/sources
+    * config/commands
+    * config/files
+    * config/users
+    * config/groups
+    * command line args
+      - placeholders are ignored
 """
+
+import argparse
+import os
+import sys
+try:
+    import simplejson as json
+except:
+    import json
+
+
+class CommandRunner(object):
+    def run(command):
+        pass
+
+
+class PackagesHandler(CommandRunner):
+    _packages = {}
+
+    def __init__(packages):
+        _packages = packages
+
+
+    def _handle_yum_package(self, package):
+        pass
+
+
+    def _handle_rpm_package(self, package):
+        pass
+
+
+    def _handle_apt_package(self, package):
+        pass
+
+
+    def _handle_dpkg_package(self, package):
+        pass
+
+
+    def apply_packages(self):
+        """
+        Install, upgrade, or downgrade packages listed
+        Each package is a dict containing package name and a list of versions
+        Install order:
+          * dpkg
+          * rpm
+          * apt
+          * yum
+        """
+        pass
+
+
+class ServicesHandler(CommandRunner):
+    _services = {}
+    _service_handlers = {
+        "sysvinit" : _handle_sysv_command,
+        "systemd" : _handle_systemd_command
+    }
+
+
+    def __init__(services):
+        _services = services
+
+
+    def _handle_sysv_command(self, service, command):
+        service_exe = "/sbin/service"
+        enable_exe = "/sbin/checkconfig"
+        cmd = ""
+        if "enable" == command:
+            cmd = "% % on" % (enable_exe, service)
+        elif "disable" == command:
+            cmd = "% % off" % (enable_exe, service)
+        elif "start" == command:
+            cmd = "% % start" % (service_exe, service)
+        elif "stop" == command:
+            cmd = "% % stop" % (service_exe, service)
+        elif "status" == command:
+            cmd = "% % status" % (service_exe, service)
+        return run(cmd)
+
+
+    def _handle_systemd_command(self, service, command):
+        exe = "/bin/systemctl"
+        cmd = ""
+        if "enable" == command:
+            cmd = "% enable %" % (exe, service)
+        elif "disable" == command:
+            cmd = "% disable %" % (exe, service)
+        elif "start" == command:
+            cmd = "% start %" % (exe, service)
+        elif "stop" == command:
+            cmd = "% stop %" % (exe, service)
+        elif "status" == command:
+            cmd = "% status %" % (exe, service)
+        return run(cmd)
+
+
+    def _handle_service(self, handler, service, properties):
+        if "enabled" in properties:
+            enable = to_boolean(properties["enabled"])
+            if enable:
+                handler(service, "enable")
+            else:
+                handler(service, "disable")
+
+        if "ensureRunning" in properties:
+            ensure_running = to_boolean(properties["ensureRunning"])
+            exit_status = handler(service, "status")
+            running = exit_status == 0
+            if ensure_running and not running:
+                handler(service, "start")
+            elif not ensure_running and running:
+                handler(service, "stop")
+
+
+    def _handle_services(self, handler, services):
+        for service, properties in services:
+            _handle_service(handler, service, properties)
+
+
+    def apply_services(self):
+        """
+        Starts, stops, enables, disables services
+        """
+        for manager, service_entries in _services.iteritems():
+            if manager not in _service_handlers:
+                print >> stderr,
+                        "Skipping invalid service type: %s" % manager
+            else:
+                handler = _service_handlers[manager]
+            _handle_services(handler, service_entries)
+
+
+class Metadata(object):
+    _metadata = None
+    _init_key = "AWS::CloudFormation::Init"
+
+    def __init__(metadata):
+        _metadata = metadata
+
+
+    def _is_valid_metadata(self):
+        """
+        Should find the AWS::CloudFormation::Init json key
+        """
+        return _metadata and _init_key in _metadata and _metadata[_init_key]
+
+
+    def _process_config(self, config):
+        """
+        Parse and process a config section
+          * packages
+          * sources (not yet)
+          * users (not yet)
+          * groups (not yet)
+          * files (not yet)
+          * commands (not yet)
+          * services
+        """
+        PackagesHandler(config.get("packages")).apply_packages()
+        #sources
+        #users
+        #groups
+        #files
+        #commands
+        ServicesHandler(config.get("services")).apply_services()
+
+
+    def process(self):
+        """
+        Process the resource metadata
+        """
+        # FIXME: when config sets are implemented, this should select the correct
+        # config set from the metadata, and send each config in the config set to
+        # process_config
+        if not _is_valid_metadata():
+            raise Exception("invalid metadata")
+        else:
+            process_config(_metadata)
+
+
+def to_boolean(b):
+    val = b.lower().strip() if isinstance(b, basestring) else b
+    return b in [True, 'true', 'yes', '1', 1]
+
+
+def get_metadata():
+    """
+    Find the metadata on the filesystem
+    """
+    pass
+
+
+## Main
+description = " "
+parser = argparse.ArgumentParser(description=description)
+parser.add_argument('-s', '--stack', dest="stack_name",
+        help="A Heat stack name", required=False)
+parser.add_argument('-r', '--resource' dest="logical_resource_id",
+        help="A Heat logical resource ID", required=False)
+parser.add('', '--access-key', dest="access_key",
+        help="A Keystone access key", required=False)
+parser.add('', '--secret-key', dest="secret_key",
+        help="A Keystone secret key", required=False)
+parser.add('', '--region', dest="region",
+        help="Openstack region", required=False)
+args = parser.parse_args()
+# FIXME: implement real arg parsing and response
+
+metadata = Metadata(get_metadata())
+try:
+    metadata.process()
+except Exception as e:
+    print >> sys.stderr, "Error processing metadata: %s" % e
+    exit(1)
